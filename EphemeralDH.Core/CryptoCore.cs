@@ -118,8 +118,8 @@ public static class CryptoCore
         return encoded;
     }
 
-    public static ClientRequestEnvelope CreateClientRequest(string username, string password, byte[] clientEphemeralPublicKey)
-        => new(username, password, clientEphemeralPublicKey);
+    public static ClientRequestEnvelope CreateClientRequest(string username, byte[] clientEphemeralPublicKey)
+        => new(username, clientEphemeralPublicKey);
 
     public static ServerResponseEnvelope CreateServerResponse(byte[] serverEphemeralPublicKey, byte[] nonce, byte[] tag, string protocolVersion)
         => new(serverEphemeralPublicKey, nonce, tag, protocolVersion);
@@ -185,7 +185,7 @@ public static class CryptoCore
     }
 }
 
-public sealed record ClientRequestEnvelope(string Username, string Password, byte[] ClientEphemeralPublicKey)
+public sealed record ClientRequestEnvelope(string Username, byte[] ClientEphemeralPublicKey)
 {
     public void Validate()
     {

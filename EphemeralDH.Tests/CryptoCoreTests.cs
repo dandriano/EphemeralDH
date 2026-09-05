@@ -27,7 +27,7 @@ public class CryptoCoreTests
         using var server = CryptoCore.CreateEphemeralKey();
 
         var clientPublicKey = CryptoCore.EncodePublicKey(client.PublicKey);
-        var request = CryptoCore.CreateClientRequest("alice", "password", clientPublicKey);
+        var request = CryptoCore.CreateClientRequest("alice", clientPublicKey);
         request.Validate();
 
         var requestSalt = CryptoCore.DeriveRequestSalt("POST", "/api/secure", request.Username);

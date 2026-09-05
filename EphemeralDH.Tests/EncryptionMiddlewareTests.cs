@@ -40,7 +40,6 @@ public class EncryptionMiddlewareTests
     public async Task SecureEndpoint_EncryptsResponse_AndDecryptsWithReturnedHeaders()
     {
         const string username = "alice";
-        const string password = "password";
         const string path = "/api/secure";
         const string plaintextText = "response-body";
         var plaintext = Encoding.UTF8.GetBytes(plaintextText);
@@ -55,7 +54,7 @@ public class EncryptionMiddlewareTests
         context.Request.Method = "POST";
         context.Request.Path = path;
 
-        context.Request.Headers.Authorization = BasicAuthCodec.CreateBasicAuth(username, password).ToString();
+        context.Request.Headers["X-EDHX-Username"] = username;
         context.Request.Headers[ProtocolCodec.ClientPublicKeyHeader] = Convert.ToBase64String(clientPublicKey);
 
         // `next` writes the plaintext body and sets 2xx status.
@@ -99,7 +98,7 @@ public class EncryptionMiddlewareTests
     }
 
     [Fact]
-    public async Task SecureEndpoint_MissingBasicAuth_Returns401_AndNoEdhxHeaders()
+    public async Task SecureEndpoint_MissingIdentity_Returns401_AndNoEdhxHeaders()
     {
         var middleware = new EdhxEncryptionMiddleware();
         var context = new DefaultHttpContext();
@@ -108,7 +107,7 @@ public class EncryptionMiddlewareTests
         context.Request.Method = "POST";
         context.Request.Path = "/api/something";
 
-        // Provide only client public key.
+        // Provide only client public key, but omit identity.
         using var key = CryptoCore.CreateEphemeralKey();
         var clientPublicKey = CryptoCore.EncodePublicKey(key.PublicKey);
         context.Request.Headers[ProtocolCodec.ClientPublicKeyHeader] = Convert.ToBase64String(clientPublicKey);
@@ -132,7 +131,6 @@ public class EncryptionMiddlewareTests
     public async Task SecureEndpoint_MissingClientPublicKey_Returns401_AndNoEdhxHeaders()
     {
         const string username = "alice";
-        const string password = "password";
 
         var middleware = new EdhxEncryptionMiddleware();
         var context = new DefaultHttpContext();
@@ -141,7 +139,7 @@ public class EncryptionMiddlewareTests
         context.Request.Method = "POST";
         context.Request.Path = "/api/something";
 
-        context.Request.Headers.Authorization = BasicAuthCodec.CreateBasicAuth(username, password).ToString();
+        context.Request.Headers["X-EDHX-Username"] = username;
 
         static Task next(HttpContext ctx)
         {

@@ -8,7 +8,8 @@ Original c# idea / implementation is [here](https://davidtavarez.github.io/2019/
 
 Client request
 
-- `Authorization: Basic base64(username:password)`
+- Identity (username) must be bound into transcripts as `username`.
+- Middleware expects `X-EDHX-Username: <username>` by default.
 - `X-EDHX-Client-Public-Key: base64(clientEphemeralPublicKey)` (P-256 uncompressed, 65 bytes; first byte is `0x04`)
 - Transcript bindings for request salt + AEAD AAD are computed from the HTTP `method`, `path`, and identity `username`.
 
@@ -48,7 +49,7 @@ client decrypts response using the returned server public key + nonce/tag + AAD
 
 Request
 
-- `Authorization: Basic base64(username:password)` must be present and parseable; otherwise the middleware responds `401 Unauthorized`.
+- Identity must be resolvable by the configured `IEdhxIdentityResolver` (default: `X-EDHX-Username`); otherwise the middleware responds `401 Unauthorized`.
 - `X-EDHX-Client-Public-Key: base64(clientEphemeralPublicKey)` must be present and parseable; otherwise the middleware responds `401 Unauthorized`.
 - On any `401`, the middleware does not set any `X-EDHX-*` protocol headers.
 

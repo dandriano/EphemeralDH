@@ -1,17 +1,26 @@
 using System.IO;
 using System.Linq;
-using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Text;
 using System.Threading.Tasks;
 using EphemeralDH.Core;
 using EphemeralDH.Middleware.Headers;
+using EphemeralDH.Middleware.Identity;
 using Microsoft.AspNetCore.Http;
 
 namespace EphemeralDH.Middleware;
 
 public sealed class EdhxEncryptionMiddleware : IMiddleware
 {
+    private readonly IEdhxIdentityResolver _identityResolver;
+
+    public EdhxEncryptionMiddleware() : this(new HeaderIdentityResolver())
+    {
+    }
+
+    public EdhxEncryptionMiddleware(IEdhxIdentityResolver identityResolver)
+        => _identityResolver = identityResolver;
+
     public async Task InvokeAsync(HttpContext context, RequestDelegate next)
     {
         var endpoint = context.GetEndpoint();
@@ -24,19 +33,9 @@ public sealed class EdhxEncryptionMiddleware : IMiddleware
             return;
         }
 
-        // Fail closed on missing/invalid client metadata.
-        string username;
-        try
-        {
-            AuthenticationHeaderValue? authHeader = null;
-            if (context.Request.Headers.TryGetValue("Authorization", out var authValues))
-            {
-                AuthenticationHeaderValue.TryParse(authValues.ToString(), out authHeader);
-            }
-
-            (username, _) = BasicAuthCodec.ReadBasicAuth(authHeader);
-        }
-        catch (CryptographicException)
+        // Fail closed on missing/invalid client identity.
+        if (!_identityResolver.TryResolveUsername(context, out var username) ||
+            string.IsNullOrWhiteSpace(username))
         {
             context.Response.StatusCode = StatusCodes.Status401Unauthorized;
             return;
