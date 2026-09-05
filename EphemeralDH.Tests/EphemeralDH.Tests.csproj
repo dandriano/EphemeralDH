@@ -16,7 +16,11 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\EphemeralDH.Core\EphemeralDH.Core.csproj" />
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\EphemeralDH.Middleware\EphemeralDH.Middleware.csproj" />
   </ItemGroup>
 
   <ItemGroup>
