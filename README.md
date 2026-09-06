@@ -9,7 +9,7 @@ Original c# idea / implementation is [here](https://davidtavarez.github.io/2019/
 Client request
 
 - Identity (username) must be bound into transcripts as `username`.
-- Middleware expects `X-EDHX-Username: <username>` by default.
+- Middleware resolves identity from the authenticated principal (`ClaimsPrincipal.Identity.Name`).
 - `X-EDHX-Client-Public-Key: base64(clientEphemeralPublicKey)` (P-256 uncompressed, 65 bytes; first byte is `0x04`)
 - Transcript bindings for request salt + AEAD AAD are computed from the HTTP `method`, `path`, and identity `username`.
 
@@ -49,7 +49,7 @@ client decrypts response using the returned server public key + nonce/tag + AAD
 
 Request
 
-- Identity must be resolvable by the configured `IEdhxIdentityResolver` (default: `X-EDHX-Username`); otherwise the middleware responds `401 Unauthorized`.
+- Identity must be resolvable by the configured `IEdhxIdentityResolver` (default: `BasicPrincipalIdentityResolver`, which reads `ClaimsPrincipal.Identity.Name`); otherwise the middleware responds `401 Unauthorized`.
 - `X-EDHX-Client-Public-Key: base64(clientEphemeralPublicKey)` must be present and parseable; otherwise the middleware responds `401 Unauthorized`.
 - On any `401`, the middleware does not set any `X-EDHX-*` protocol headers.
 
@@ -69,3 +69,20 @@ Transcript
 
 - Request salt and AEAD AAD are computed from the HTTP `method`, `path`, and identity `username`.
 - HKDF `info` is computed from `path` as UTF-8 bytes (must match the client implementation).
+
+## Server (demo)
+
+`EphemeralDH.Server` is a demo service that composes the existing `EphemeralDH.Core` + `EphemeralDH.Middleware` projects. It is intentionally opinionated so consumers can distinguish what is demo-only from what to reuse in their own servers.
+
+The demo server uses:
+
+- Basic auth (`Authorization: Basic ...`)
+- SQLite-backed user storage
+- `EdhxEncryptionMiddleware` to encrypt responses only for endpoints marked with `RequireEdhxEncryption()`
+
+Shipped endpoints:
+
+- `GET /health`
+- `POST /users` (admin-only) to create users
+- `POST /echo` (encrypted echo) for authenticated users
+

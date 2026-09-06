@@ -10,16 +10,13 @@ using Microsoft.AspNetCore.Http;
 
 namespace EphemeralDH.Middleware;
 
-public sealed class EdhxEncryptionMiddleware : IMiddleware
+public sealed class EdhxEncryptionMiddleware(IEdhxIdentityResolver identityResolver) : IMiddleware
 {
-    private readonly IEdhxIdentityResolver _identityResolver;
+    private readonly IEdhxIdentityResolver _identityResolver = identityResolver;
 
-    public EdhxEncryptionMiddleware() : this(new HeaderIdentityResolver())
+    public EdhxEncryptionMiddleware() : this(new BasicPrincipalIdentityResolver())
     {
     }
-
-    public EdhxEncryptionMiddleware(IEdhxIdentityResolver identityResolver)
-        => _identityResolver = identityResolver;
 
     public async Task InvokeAsync(HttpContext context, RequestDelegate next)
     {
@@ -78,22 +75,20 @@ public sealed class EdhxEncryptionMiddleware : IMiddleware
 
         // If there is no response body, nothing to encrypt.
         if (memory.Length == 0)
-        {
             return;
-        }
 
         var plaintext = memory.ToArray();
 
-        // Per plan: Derive session values from transcript binding.
+        // Derive session values from transcript binding.
         var requestSalt = CryptoCore.DeriveRequestSalt(context.Request.Method, context.Request.Path, username);
         using var server = CryptoCore.CreateEphemeralKey();
         var sharedSecret = CryptoCore.DeriveSharedSecret(server, clientPublicKey);
 
-        // Per plan: HKDF info = UTF8(request.Path)
+        // HKDF info = UTF8(request.Path)
         var info = Encoding.UTF8.GetBytes(context.Request.Path);
         var sessionKey = CryptoCore.DeriveSessionKey(sharedSecret, requestSalt, info);
 
-        // BuildAssociatedData: protocol version + method + path + username
+        // protocol version + method + path + username
         var aad = CryptoCore.BuildAssociatedData(CryptoCore.ProtocolVersion, context.Request.Method, context.Request.Path, username);
 
         var nonce = RandomNumberGenerator.GetBytes(CryptoCore.NonceLength);
@@ -109,6 +104,7 @@ public sealed class EdhxEncryptionMiddleware : IMiddleware
 
         context.Response.ContentType = "application/octet-stream";
         context.Response.ContentLength = ciphertext.Length;
+        
         await originalBody.WriteAsync(ciphertext, context.RequestAborted);
     }
 }

@@ -5,7 +5,7 @@ using System.IO;
 using System.Text;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Http;
-using Microsoft.AspNetCore.Routing;
+using System.Security.Claims;
 using EphemeralDH.Core;
 using EphemeralDH.Middleware;
 
@@ -54,7 +54,8 @@ public class EncryptionMiddlewareTests
         context.Request.Method = "POST";
         context.Request.Path = path;
 
-        context.Request.Headers["X-EDHX-Username"] = username;
+        context.User = new ClaimsPrincipal(
+            new ClaimsIdentity(new[] { new Claim(ClaimTypes.Name, username) }, authenticationType: "test"));
         context.Request.Headers[ProtocolCodec.ClientPublicKeyHeader] = Convert.ToBase64String(clientPublicKey);
 
         // `next` writes the plaintext body and sets 2xx status.
@@ -139,7 +140,8 @@ public class EncryptionMiddlewareTests
         context.Request.Method = "POST";
         context.Request.Path = "/api/something";
 
-        context.Request.Headers["X-EDHX-Username"] = username;
+        context.User = new ClaimsPrincipal(
+            new ClaimsIdentity([new Claim(ClaimTypes.Name, username)], authenticationType: "test"));
 
         static Task next(HttpContext ctx)
         {
