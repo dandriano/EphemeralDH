@@ -70,6 +70,10 @@ Transcript
 - Request salt and AEAD AAD are computed from the HTTP `method`, `path`, and identity `username`.
 - HKDF `info` is computed from `path` as UTF-8 bytes (must match the client implementation).
 
+## Client (demo)
+
+Just a smoke test for the server (see below).
+
 ## Server (demo)
 
 `EphemeralDH.Server` is a demo service that composes the existing `EphemeralDH.Core` + `EphemeralDH.Middleware` projects. It is intentionally opinionated so consumers can distinguish what is demo-only from what to reuse in their own servers.
