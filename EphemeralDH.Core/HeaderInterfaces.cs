@@ -1,11 +1,11 @@
 namespace EphemeralDH.Core;
 
-public interface IProtocolHeaderReader
+public interface IHeaderReader
 {
     bool TryGetHeader(string name, out string? value);
 }
 
-public interface IProtocolHeaderWriter
+public interface IHeaderWriter
 {
     void SetHeader(string name, string value);
     void RemoveHeader(string name);

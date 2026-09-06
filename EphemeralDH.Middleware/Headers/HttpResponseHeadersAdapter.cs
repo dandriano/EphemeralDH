@@ -2,7 +2,7 @@ using EphemeralDH.Core;
 
 namespace EphemeralDH.Middleware.Headers;
 
-internal sealed class HttpResponseHeadersAdapter(Microsoft.AspNetCore.Http.HttpResponse response) : IProtocolHeaderWriter
+internal sealed class HttpResponseHeadersAdapter(Microsoft.AspNetCore.Http.HttpResponse response) : IHeaderWriter
 {
     private readonly Microsoft.AspNetCore.Http.HttpResponse _response = response;
 

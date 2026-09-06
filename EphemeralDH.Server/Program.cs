@@ -4,7 +4,6 @@ using EphemeralDH.Server.Auth;
 using EphemeralDH.Server.Data;
 using EphemeralDH.Server.Endpoints;
 using EphemeralDH.Server.Middleware;
-using EphemeralDH.Middleware.Identity;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Builder;

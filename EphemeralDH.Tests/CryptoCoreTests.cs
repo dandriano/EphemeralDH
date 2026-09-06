@@ -10,11 +10,11 @@ public class CryptoCoreTests
     [Fact]
     public void SharedSecret_Symmetry_ClientMatchesServer()
     {
-        using var client = CryptoCore.CreateEphemeralKey();
-        using var server = CryptoCore.CreateEphemeralKey();
+        using var client = Crypto.CreateEphemeralKey();
+        using var server = Crypto.CreateEphemeralKey();
 
-        var clientSecret = CryptoCore.DeriveSharedSecret(client, server.PublicKey);
-        var serverSecret = CryptoCore.DeriveSharedSecret(server, client.PublicKey);
+        var clientSecret = Crypto.DeriveSharedSecret(client, server.PublicKey);
+        var serverSecret = Crypto.DeriveSharedSecret(server, client.PublicKey);
 
         Assert.True(MemoryExtensions.SequenceEqual<byte>(clientSecret, serverSecret));
     }
@@ -23,27 +23,27 @@ public class CryptoCoreTests
     public void ProtocolRoundtrip_EncryptsBodyAndDecryptsWithReturnedHeaders()
     {
         var plaintext = Encoding.UTF8.GetBytes("secret message");
-        using var client = CryptoCore.CreateEphemeralKey();
-        using var server = CryptoCore.CreateEphemeralKey();
+        using var client = Crypto.CreateEphemeralKey();
+        using var server = Crypto.CreateEphemeralKey();
 
-        var clientPublicKey = CryptoCore.EncodePublicKey(client.PublicKey);
-        var request = CryptoCore.CreateClientRequest("alice", clientPublicKey);
+        var clientPublicKey = Crypto.EncodePublicKey(client.PublicKey);
+        var request = Crypto.CreateClientRequest("alice", clientPublicKey);
         request.Validate();
 
-        var requestSalt = CryptoCore.DeriveRequestSalt("POST", "/api/secure", request.Username);
-        var clientSharedSecret = CryptoCore.DeriveSharedSecret(client, server.PublicKey);
-        var clientSessionKey = CryptoCore.DeriveSessionKey(clientSharedSecret, requestSalt, Encoding.UTF8.GetBytes("response-body"));
+        var requestSalt = Crypto.DeriveRequestSalt("POST", "/api/secure", request.Username);
+        var clientSharedSecret = Crypto.DeriveSharedSecret(client, server.PublicKey);
+        var clientSessionKey = Crypto.DeriveSessionKey(clientSharedSecret, requestSalt, Encoding.UTF8.GetBytes("response-body"));
 
-        var nonce = RandomNumberGenerator.GetBytes(CryptoCore.NonceLength);
-        var aad = CryptoCore.BuildAssociatedData(CryptoCore.ProtocolVersion, "POST", "/api/secure", request.Username);
-        var ciphertext = CryptoCore.EncryptResponse(clientSessionKey, plaintext, nonce, aad, out var tag);
+        var nonce = RandomNumberGenerator.GetBytes(Crypto.NonceLength);
+        var aad = Crypto.BuildAssociatedData(Crypto.ProtocolVersion, "POST", "/api/secure", request.Username);
+        var ciphertext = Crypto.EncryptResponse(clientSessionKey, plaintext, nonce, aad, out var tag);
 
-        var response = CryptoCore.CreateServerResponse(CryptoCore.EncodePublicKey(server.PublicKey), nonce, tag, CryptoCore.ProtocolVersion);
+        var response = Crypto.CreateServerResponse(Crypto.EncodePublicKey(server.PublicKey), nonce, tag, Crypto.ProtocolVersion);
         response.Validate();
 
-        var serverSharedSecret = CryptoCore.DeriveSharedSecret(server, clientPublicKey);
-        var serverSessionKey = CryptoCore.DeriveSessionKey(serverSharedSecret, requestSalt, Encoding.UTF8.GetBytes("response-body"));
-        var decrypted = CryptoCore.DecryptResponse(serverSessionKey, ciphertext, response.Nonce, response.Tag, aad);
+        var serverSharedSecret = Crypto.DeriveSharedSecret(server, clientPublicKey);
+        var serverSessionKey = Crypto.DeriveSessionKey(serverSharedSecret, requestSalt, Encoding.UTF8.GetBytes("response-body"));
+        var decrypted = Crypto.DecryptResponse(serverSessionKey, ciphertext, response.Nonce, response.Tag, aad);
 
         Assert.True(MemoryExtensions.SequenceEqual<byte>(decrypted, plaintext));
     }
@@ -52,72 +52,72 @@ public class CryptoCoreTests
     public void AadMismatch_ChangingMetadataBreaksDecryption()
     {
         var plaintext = Encoding.UTF8.GetBytes("secret message");
-        using var client = CryptoCore.CreateEphemeralKey();
-        using var server = CryptoCore.CreateEphemeralKey();
+        using var client = Crypto.CreateEphemeralKey();
+        using var server = Crypto.CreateEphemeralKey();
 
-        var sharedSecret = CryptoCore.DeriveSharedSecret(client, server.PublicKey);
-        var key = CryptoCore.DeriveSessionKey(sharedSecret, CryptoCore.DeriveRequestSalt("POST", "/api/secure", "alice"), Encoding.UTF8.GetBytes("response-body"));
-        var nonce = RandomNumberGenerator.GetBytes(CryptoCore.NonceLength);
+        var sharedSecret = Crypto.DeriveSharedSecret(client, server.PublicKey);
+        var key = Crypto.DeriveSessionKey(sharedSecret, Crypto.DeriveRequestSalt("POST", "/api/secure", "alice"), Encoding.UTF8.GetBytes("response-body"));
+        var nonce = RandomNumberGenerator.GetBytes(Crypto.NonceLength);
 
-        var aad = CryptoCore.BuildAssociatedData(CryptoCore.ProtocolVersion, "POST", "/api/secure", "alice");
-        var ciphertext = CryptoCore.EncryptResponse(key, plaintext, nonce, aad, out var tag);
+        var aad = Crypto.BuildAssociatedData(Crypto.ProtocolVersion, "POST", "/api/secure", "alice");
+        var ciphertext = Crypto.EncryptResponse(key, plaintext, nonce, aad, out var tag);
 
-        var badAad = CryptoCore.BuildAssociatedData("dhx2", "POST", "/api/secure", "alice");
+        var badAad = Crypto.BuildAssociatedData("dhx2", "POST", "/api/secure", "alice");
 
-        Assert.Throws<AuthenticationTagMismatchException>(() => CryptoCore.DecryptResponse(key, ciphertext, nonce, tag, badAad));
+        Assert.Throws<AuthenticationTagMismatchException>(() => Crypto.DecryptResponse(key, ciphertext, nonce, tag, badAad));
     }
 
     [Fact]
     public void TamperedCiphertext_Throws()
     {
         var plaintext = Encoding.UTF8.GetBytes("secret message");
-        using var client = CryptoCore.CreateEphemeralKey();
-        using var server = CryptoCore.CreateEphemeralKey();
+        using var client = Crypto.CreateEphemeralKey();
+        using var server = Crypto.CreateEphemeralKey();
 
-        var sharedSecret = CryptoCore.DeriveSharedSecret(client, server.PublicKey);
-        var key = CryptoCore.DeriveSessionKey(sharedSecret, CryptoCore.DeriveRequestSalt("POST", "/api/secure", "alice"), Encoding.UTF8.GetBytes("response-body"));
-        var nonce = RandomNumberGenerator.GetBytes(CryptoCore.NonceLength);
-        var aad = CryptoCore.BuildAssociatedData(CryptoCore.ProtocolVersion, "POST", "/api/secure", "alice");
+        var sharedSecret = Crypto.DeriveSharedSecret(client, server.PublicKey);
+        var key = Crypto.DeriveSessionKey(sharedSecret, Crypto.DeriveRequestSalt("POST", "/api/secure", "alice"), Encoding.UTF8.GetBytes("response-body"));
+        var nonce = RandomNumberGenerator.GetBytes(Crypto.NonceLength);
+        var aad = Crypto.BuildAssociatedData(Crypto.ProtocolVersion, "POST", "/api/secure", "alice");
 
-        var ciphertext = CryptoCore.EncryptResponse(key, plaintext, nonce, aad, out var tag);
+        var ciphertext = Crypto.EncryptResponse(key, plaintext, nonce, aad, out var tag);
         ciphertext[0] ^= 0x01;
 
-        Assert.Throws<AuthenticationTagMismatchException>(() => CryptoCore.DecryptResponse(key, ciphertext, nonce, tag, aad));
+        Assert.Throws<AuthenticationTagMismatchException>(() => Crypto.DecryptResponse(key, ciphertext, nonce, tag, aad));
     }
 
     [Fact]
     public void TamperedTag_Throws()
     {
         var plaintext = Encoding.UTF8.GetBytes("secret message");
-        using var client = CryptoCore.CreateEphemeralKey();
-        using var server = CryptoCore.CreateEphemeralKey();
+        using var client = Crypto.CreateEphemeralKey();
+        using var server = Crypto.CreateEphemeralKey();
 
-        var sharedSecret = CryptoCore.DeriveSharedSecret(client, server.PublicKey);
-        var key = CryptoCore.DeriveSessionKey(sharedSecret, CryptoCore.DeriveRequestSalt("POST", "/api/secure", "alice"), Encoding.UTF8.GetBytes("response-body"));
-        var nonce = RandomNumberGenerator.GetBytes(CryptoCore.NonceLength);
-        var aad = CryptoCore.BuildAssociatedData(CryptoCore.ProtocolVersion, "POST", "/api/secure", "alice");
+        var sharedSecret = Crypto.DeriveSharedSecret(client, server.PublicKey);
+        var key = Crypto.DeriveSessionKey(sharedSecret, Crypto.DeriveRequestSalt("POST", "/api/secure", "alice"), Encoding.UTF8.GetBytes("response-body"));
+        var nonce = RandomNumberGenerator.GetBytes(Crypto.NonceLength);
+        var aad = Crypto.BuildAssociatedData(Crypto.ProtocolVersion, "POST", "/api/secure", "alice");
 
-        var ciphertext = CryptoCore.EncryptResponse(key, plaintext, nonce, aad, out var tag);
+        var ciphertext = Crypto.EncryptResponse(key, plaintext, nonce, aad, out var tag);
         tag[0] ^= 0x01;
 
-        Assert.Throws<AuthenticationTagMismatchException>(() => CryptoCore.DecryptResponse(key, ciphertext, nonce, tag, aad));
+        Assert.Throws<AuthenticationTagMismatchException>(() => Crypto.DecryptResponse(key, ciphertext, nonce, tag, aad));
     }
 
     [Fact]
     public void TamperedNonce_Throws()
     {
         var plaintext = Encoding.UTF8.GetBytes("secret message");
-        using var client = CryptoCore.CreateEphemeralKey();
-        using var server = CryptoCore.CreateEphemeralKey();
+        using var client = Crypto.CreateEphemeralKey();
+        using var server = Crypto.CreateEphemeralKey();
 
-        var sharedSecret = CryptoCore.DeriveSharedSecret(client, server.PublicKey);
-        var key = CryptoCore.DeriveSessionKey(sharedSecret, CryptoCore.DeriveRequestSalt("POST", "/api/secure", "alice"), Encoding.UTF8.GetBytes("response-body"));
-        var nonce = RandomNumberGenerator.GetBytes(CryptoCore.NonceLength);
-        var aad = CryptoCore.BuildAssociatedData(CryptoCore.ProtocolVersion, "POST", "/api/secure", "alice");
+        var sharedSecret = Crypto.DeriveSharedSecret(client, server.PublicKey);
+        var key = Crypto.DeriveSessionKey(sharedSecret, Crypto.DeriveRequestSalt("POST", "/api/secure", "alice"), Encoding.UTF8.GetBytes("response-body"));
+        var nonce = RandomNumberGenerator.GetBytes(Crypto.NonceLength);
+        var aad = Crypto.BuildAssociatedData(Crypto.ProtocolVersion, "POST", "/api/secure", "alice");
 
-        var ciphertext = CryptoCore.EncryptResponse(key, plaintext, nonce, aad, out var tag);
+        var ciphertext = Crypto.EncryptResponse(key, plaintext, nonce, aad, out var tag);
         nonce[0] ^= 0x01;
 
-        Assert.Throws<AuthenticationTagMismatchException>(() => CryptoCore.DecryptResponse(key, ciphertext, nonce, tag, aad));
+        Assert.Throws<AuthenticationTagMismatchException>(() => Crypto.DecryptResponse(key, ciphertext, nonce, tag, aad));
     }
 }

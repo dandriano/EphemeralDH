@@ -6,14 +6,14 @@ using System.Text;
 
 namespace EphemeralDH.Core;
 
-public static class CryptoCore
+public static class Crypto
 {
+    public const string ProtocolVersion = "edhx1";
     public const int P256PublicKeyLength = 65;
     public const int NonceLength = 12;
     public const int TagLength = 16;
     public const int Aes256KeyLength = 32;
     private const int HkdfSha256MaxLength = 255 * 32;
-    public const string ProtocolVersion = "edhx1";
 
     public static ECDiffieHellman CreateEphemeralKey()
         => ECDiffieHellman.Create(ECCurve.NamedCurves.nistP256);
@@ -189,7 +189,7 @@ public sealed record ClientRequestEnvelope(string Username, byte[] ClientEphemer
 {
     public void Validate()
     {
-        if (ClientEphemeralPublicKey.Length != CryptoCore.P256PublicKeyLength)
+        if (ClientEphemeralPublicKey.Length != Crypto.P256PublicKeyLength)
         {
             throw new CryptographicException("Expected P-256 client public key bytes.");
         }
@@ -200,22 +200,22 @@ public sealed record ServerResponseEnvelope(byte[] ServerEphemeralPublicKey, byt
 {
     public void Validate()
     {
-        if (ServerEphemeralPublicKey.Length != CryptoCore.P256PublicKeyLength)
+        if (ServerEphemeralPublicKey.Length != Crypto.P256PublicKeyLength)
         {
             throw new CryptographicException("Expected P-256 server public key bytes.");
         }
 
-        if (Nonce.Length != CryptoCore.NonceLength)
+        if (Nonce.Length != Crypto.NonceLength)
         {
             throw new CryptographicException("Expected AES-GCM nonce bytes.");
         }
 
-        if (Tag.Length != CryptoCore.TagLength)
+        if (Tag.Length != Crypto.TagLength)
         {
             throw new CryptographicException("Expected AES-GCM tag bytes.");
         }
 
-        if (ProtocolVersion != CryptoCore.ProtocolVersion)
+        if (ProtocolVersion != Crypto.ProtocolVersion)
         {
             throw new CryptographicException("Unexpected protocol version.");
         }

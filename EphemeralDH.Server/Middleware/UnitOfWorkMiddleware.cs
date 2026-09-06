@@ -20,13 +20,6 @@ public sealed class UnitOfWorkMiddleware(RequestDelegate next)
             await uow.RollbackAsync(context.RequestAborted);
             throw;
         }
-        finally
-        {
-            // TODO: check transaction scope + ms di container integration
-            // Let DI dispose the connection (SqliteConnection implements IDisposable).
-            // If your DI container doesn’t dispose scoped services automatically, 
-            // consider explicitly disposing here.
-        }
     }
 }
 

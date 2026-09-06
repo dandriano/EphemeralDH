@@ -7,7 +7,7 @@ namespace EphemeralDH.Tests;
 
 public class ProtocolCodecTests
 {
-    private sealed class InMemoryHeaders : IProtocolHeaderReader, IProtocolHeaderWriter
+    private sealed class InMemoryHeaders : IHeaderReader, IHeaderWriter
     {
         private readonly System.Collections.Generic.Dictionary<string, string> _values =
             new(StringComparer.OrdinalIgnoreCase);
@@ -35,11 +35,11 @@ public class ProtocolCodecTests
     public void ClientPublicKeyHeader_RoundTrip()
     {
         var headers = new InMemoryHeaders();
-        using var key = CryptoCore.CreateEphemeralKey();
-        var encoded = CryptoCore.EncodePublicKey(key.PublicKey);
+        using var key = Crypto.CreateEphemeralKey();
+        var encoded = Crypto.EncodePublicKey(key.PublicKey);
 
-        ProtocolCodec.SetClientPublicKey(headers, encoded);
-        var decoded = ProtocolCodec.ReadClientPublicKey(headers);
+        Codec.SetClientPublicKey(headers, encoded);
+        var decoded = Codec.ReadClientPublicKey(headers);
 
         Assert.True(MemoryExtensions.SequenceEqual<byte>(decoded, encoded));
     }
@@ -48,14 +48,14 @@ public class ProtocolCodecTests
     public void ServerResponseHeaders_RoundTrip()
     {
         var headers = new InMemoryHeaders();
-        using var server = CryptoCore.CreateEphemeralKey();
-        var serverEphemeralPublicKey = CryptoCore.EncodePublicKey(server.PublicKey);
-        var nonce = RandomNumberGenerator.GetBytes(CryptoCore.NonceLength);
-        var tag = RandomNumberGenerator.GetBytes(CryptoCore.TagLength);
-        var response = new ServerResponseEnvelope(serverEphemeralPublicKey, nonce, tag, CryptoCore.ProtocolVersion);
+        using var server = Crypto.CreateEphemeralKey();
+        var serverEphemeralPublicKey = Crypto.EncodePublicKey(server.PublicKey);
+        var nonce = RandomNumberGenerator.GetBytes(Crypto.NonceLength);
+        var tag = RandomNumberGenerator.GetBytes(Crypto.TagLength);
+        var response = new ServerResponseEnvelope(serverEphemeralPublicKey, nonce, tag, Crypto.ProtocolVersion);
 
-        ProtocolCodec.SetServerResponseHeaders(headers, response);
-        var roundtripped = ProtocolCodec.ReadServerResponseHeaders(headers);
+        Codec.SetServerResponseHeaders(headers, response);
+        var roundtripped = Codec.ReadServerResponseHeaders(headers);
 
         Assert.True(MemoryExtensions.SequenceEqual<byte>(roundtripped.ServerEphemeralPublicKey, response.ServerEphemeralPublicKey));
         Assert.True(MemoryExtensions.SequenceEqual<byte>(roundtripped.Nonce, response.Nonce));
@@ -69,7 +69,7 @@ public class ProtocolCodecTests
         var headers = new InMemoryHeaders();
 
         var ex = Assert.Throws<CryptographicException>(() =>
-            ProtocolCodec.ReadServerResponseHeaders(headers));
+            Codec.ReadServerResponseHeaders(headers));
 
         Assert.Contains("Missing required header", ex.Message);
     }

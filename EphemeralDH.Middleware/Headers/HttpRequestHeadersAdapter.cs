@@ -2,7 +2,7 @@ using EphemeralDH.Core;
 
 namespace EphemeralDH.Middleware.Headers;
 
-internal sealed class HttpRequestHeadersAdapter(Microsoft.AspNetCore.Http.HttpRequest request) : IProtocolHeaderReader
+internal sealed class HttpRequestHeadersAdapter(Microsoft.AspNetCore.Http.HttpRequest request) : IHeaderReader
 {
     private readonly Microsoft.AspNetCore.Http.HttpRequest _request = request;
 

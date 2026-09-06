@@ -44,8 +44,8 @@ public class EncryptionMiddlewareTests
         const string plaintextText = "response-body";
         var plaintext = Encoding.UTF8.GetBytes(plaintextText);
 
-        using var clientKey = CryptoCore.CreateEphemeralKey();
-        var clientPublicKey = CryptoCore.EncodePublicKey(clientKey.PublicKey);
+        using var clientKey = Crypto.CreateEphemeralKey();
+        var clientPublicKey = Crypto.EncodePublicKey(clientKey.PublicKey);
 
         var middleware = new EdhxEncryptionMiddleware();
         var context = new DefaultHttpContext();
@@ -56,7 +56,7 @@ public class EncryptionMiddlewareTests
 
         context.User = new ClaimsPrincipal(
             new ClaimsIdentity(new[] { new Claim(ClaimTypes.Name, username) }, authenticationType: "test"));
-        context.Request.Headers[ProtocolCodec.ClientPublicKeyHeader] = Convert.ToBase64String(clientPublicKey);
+        context.Request.Headers[Codec.ClientPublicKeyHeader] = Convert.ToBase64String(clientPublicKey);
 
         // `next` writes the plaintext body and sets 2xx status.
         static Task next(HttpContext ctx)
@@ -68,33 +68,33 @@ public class EncryptionMiddlewareTests
         await InvokeAsync(middleware, context, next);
 
         Assert.Equal((int)HttpStatusCode.OK, context.Response.StatusCode);
-        Assert.True(context.Response.Headers.ContainsKey(ProtocolCodec.ServerPublicKeyHeader));
-        Assert.True(context.Response.Headers.ContainsKey(ProtocolCodec.NonceHeader));
-        Assert.True(context.Response.Headers.ContainsKey(ProtocolCodec.TagHeader));
-        Assert.True(context.Response.Headers.ContainsKey(ProtocolCodec.ProtocolVersionHeader));
+        Assert.True(context.Response.Headers.ContainsKey(Codec.ServerPublicKeyHeader));
+        Assert.True(context.Response.Headers.ContainsKey(Codec.NonceHeader));
+        Assert.True(context.Response.Headers.ContainsKey(Codec.TagHeader));
+        Assert.True(context.Response.Headers.ContainsKey(Codec.ProtocolVersionHeader));
 
         var cipherBytes = ReadResponseBody(context);
         Assert.False(plaintext.SequenceEqual(cipherBytes));
 
-        var serverPublicKeyB64 = context.Response.Headers[ProtocolCodec.ServerPublicKeyHeader].ToString();
-        var serverNonceB64 = context.Response.Headers[ProtocolCodec.NonceHeader].ToString();
-        var tagB64 = context.Response.Headers[ProtocolCodec.TagHeader].ToString();
-        var protocolVersion = context.Response.Headers[ProtocolCodec.ProtocolVersionHeader].ToString();
+        var serverPublicKeyB64 = context.Response.Headers[Codec.ServerPublicKeyHeader].ToString();
+        var serverNonceB64 = context.Response.Headers[Codec.NonceHeader].ToString();
+        var tagB64 = context.Response.Headers[Codec.TagHeader].ToString();
+        var protocolVersion = context.Response.Headers[Codec.ProtocolVersionHeader].ToString();
 
         var serverEphemeralPublicKey = Convert.FromBase64String(serverPublicKeyB64);
         var nonce = Convert.FromBase64String(serverNonceB64);
         var tag = Convert.FromBase64String(tagB64);
 
-        Assert.Equal(CryptoCore.ProtocolVersion, protocolVersion);
+        Assert.Equal(Crypto.ProtocolVersion, protocolVersion);
 
         // Compute client side session key using server ephemeral public key.
-        var sharedSecret = CryptoCore.DeriveSharedSecret(clientKey, serverEphemeralPublicKey);
-        var requestSalt = CryptoCore.DeriveRequestSalt("POST", path, username);
+        var sharedSecret = Crypto.DeriveSharedSecret(clientKey, serverEphemeralPublicKey);
+        var requestSalt = Crypto.DeriveRequestSalt("POST", path, username);
         var info = Encoding.UTF8.GetBytes(path); // must match middleware
-        var clientSessionKey = CryptoCore.DeriveSessionKey(sharedSecret, requestSalt, info);
-        var aad = CryptoCore.BuildAssociatedData(CryptoCore.ProtocolVersion, "POST", path, username);
+        var clientSessionKey = Crypto.DeriveSessionKey(sharedSecret, requestSalt, info);
+        var aad = Crypto.BuildAssociatedData(Crypto.ProtocolVersion, "POST", path, username);
 
-        var decrypted = CryptoCore.DecryptResponse(clientSessionKey, cipherBytes, nonce, tag, aad);
+        var decrypted = Crypto.DecryptResponse(clientSessionKey, cipherBytes, nonce, tag, aad);
         Assert.True(decrypted.SequenceEqual(plaintext));
     }
 
@@ -109,9 +109,9 @@ public class EncryptionMiddlewareTests
         context.Request.Path = "/api/something";
 
         // Provide only client public key, but omit identity.
-        using var key = CryptoCore.CreateEphemeralKey();
-        var clientPublicKey = CryptoCore.EncodePublicKey(key.PublicKey);
-        context.Request.Headers[ProtocolCodec.ClientPublicKeyHeader] = Convert.ToBase64String(clientPublicKey);
+        using var key = Crypto.CreateEphemeralKey();
+        var clientPublicKey = Crypto.EncodePublicKey(key.PublicKey);
+        context.Request.Headers[Codec.ClientPublicKeyHeader] = Convert.ToBase64String(clientPublicKey);
 
         static Task next(HttpContext ctx)
         {
@@ -122,10 +122,10 @@ public class EncryptionMiddlewareTests
         await InvokeAsync(middleware, context, next);
 
         Assert.Equal((int)HttpStatusCode.Unauthorized, context.Response.StatusCode);
-        Assert.False(context.Response.Headers.ContainsKey(ProtocolCodec.ServerPublicKeyHeader));
-        Assert.False(context.Response.Headers.ContainsKey(ProtocolCodec.NonceHeader));
-        Assert.False(context.Response.Headers.ContainsKey(ProtocolCodec.TagHeader));
-        Assert.False(context.Response.Headers.ContainsKey(ProtocolCodec.ProtocolVersionHeader));
+        Assert.False(context.Response.Headers.ContainsKey(Codec.ServerPublicKeyHeader));
+        Assert.False(context.Response.Headers.ContainsKey(Codec.NonceHeader));
+        Assert.False(context.Response.Headers.ContainsKey(Codec.TagHeader));
+        Assert.False(context.Response.Headers.ContainsKey(Codec.ProtocolVersionHeader));
     }
 
     [Fact]
@@ -152,10 +152,10 @@ public class EncryptionMiddlewareTests
         await InvokeAsync(middleware, context, next);
 
         Assert.Equal((int)HttpStatusCode.Unauthorized, context.Response.StatusCode);
-        Assert.False(context.Response.Headers.ContainsKey(ProtocolCodec.ServerPublicKeyHeader));
-        Assert.False(context.Response.Headers.ContainsKey(ProtocolCodec.NonceHeader));
-        Assert.False(context.Response.Headers.ContainsKey(ProtocolCodec.TagHeader));
-        Assert.False(context.Response.Headers.ContainsKey(ProtocolCodec.ProtocolVersionHeader));
+        Assert.False(context.Response.Headers.ContainsKey(Codec.ServerPublicKeyHeader));
+        Assert.False(context.Response.Headers.ContainsKey(Codec.NonceHeader));
+        Assert.False(context.Response.Headers.ContainsKey(Codec.TagHeader));
+        Assert.False(context.Response.Headers.ContainsKey(Codec.ProtocolVersionHeader));
     }
 
     private static byte[] ReadResponseBody(DefaultHttpContext context)

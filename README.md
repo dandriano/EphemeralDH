@@ -3,6 +3,7 @@
 The implementation of a ECDH → HKDF-SHA256 → AES-GCM pipeline, which is a standard cryptographic combination used to establish secure, authenticated end-to-end encryption between two parties without sharing a long-term secret beforehand.
 
 Original c# idea / implementation is [here](https://davidtavarez.github.io/2019/implementing-elliptic-curve-diffie-hellman-c-sharp/).
+Also SslStream [limitations](https://stackoverflow.com/questions/20188480/sslstream-without-certificate).
 
 ## Core
 
@@ -69,6 +70,10 @@ Transcript
 
 - Request salt and AEAD AAD are computed from the HTTP `method`, `path`, and identity `username`.
 - HKDF `info` is computed from `path` as UTF-8 bytes (must match the client implementation).
+
+## Client (demo)
+
+Just a smoke test for the server (see below).
 
 ## Server (demo)
 

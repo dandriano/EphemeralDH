@@ -3,7 +3,7 @@ using System.Security.Cryptography;
 
 namespace EphemeralDH.Core;
 
-public static class ProtocolCodec
+public static class Codec
 {
     public const string ClientPublicKeyHeader = "X-EDHX-Client-Public-Key";
     public const string ServerPublicKeyHeader = "X-EDHX-Server-Public-Key";
@@ -11,16 +11,16 @@ public static class ProtocolCodec
     public const string TagHeader = "X-EDHX-Tag";
     public const string ProtocolVersionHeader = "X-EDHX-Protocol-Version";
 
-    public static void SetClientPublicKey(IProtocolHeaderWriter headers, byte[] clientPublicKey)
+    public static void SetClientPublicKey(IHeaderWriter headers, byte[] clientPublicKey)
     {
         headers.RemoveHeader(ClientPublicKeyHeader);
         headers.SetHeader(ClientPublicKeyHeader, Convert.ToBase64String(clientPublicKey));
     }
 
-    public static byte[] ReadClientPublicKey(IProtocolHeaderReader headers)
+    public static byte[] ReadClientPublicKey(IHeaderReader headers)
         => ReadRequiredBytes(headers, ClientPublicKeyHeader);
 
-    public static void SetServerResponseHeaders(IProtocolHeaderWriter headers, ServerResponseEnvelope response)
+    public static void SetServerResponseHeaders(IHeaderWriter headers, ServerResponseEnvelope response)
     {
         response.Validate();
         headers.RemoveHeader(ServerPublicKeyHeader);
@@ -34,7 +34,7 @@ public static class ProtocolCodec
         headers.SetHeader(ProtocolVersionHeader, response.ProtocolVersion);
     }
 
-    public static ServerResponseEnvelope ReadServerResponseHeaders(IProtocolHeaderReader headers)
+    public static ServerResponseEnvelope ReadServerResponseHeaders(IHeaderReader headers)
     {
         var serverPublicKey = ReadRequiredBytes(headers, ServerPublicKeyHeader);
         var nonce = ReadRequiredBytes(headers, NonceHeader);
@@ -46,7 +46,7 @@ public static class ProtocolCodec
         return response;
     }
 
-    private static byte[] ReadRequiredBytes(IProtocolHeaderReader headers, string name)
+    private static byte[] ReadRequiredBytes(IHeaderReader headers, string name)
     {
         var value = ReadRequiredHeader(headers, name);
         try
@@ -59,7 +59,7 @@ public static class ProtocolCodec
         }
     }
 
-    private static string ReadRequiredHeader(IProtocolHeaderReader headers, string name)
+    private static string ReadRequiredHeader(IHeaderReader headers, string name)
     {
         if (!headers.TryGetHeader(name, out var value) || string.IsNullOrWhiteSpace(value))
         {

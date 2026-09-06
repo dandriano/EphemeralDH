@@ -43,7 +43,7 @@ public sealed class EdhxEncryptionMiddleware(IEdhxIdentityResolver identityResol
         byte[] clientPublicKey;
         try
         {
-            clientPublicKey = ProtocolCodec.ReadClientPublicKey(requestHeadersAdapter);
+            clientPublicKey = Codec.ReadClientPublicKey(requestHeadersAdapter);
         }
         catch (CryptographicException)
         {
@@ -80,27 +80,27 @@ public sealed class EdhxEncryptionMiddleware(IEdhxIdentityResolver identityResol
         var plaintext = memory.ToArray();
 
         // Derive session values from transcript binding.
-        var requestSalt = CryptoCore.DeriveRequestSalt(context.Request.Method, context.Request.Path, username);
-        using var server = CryptoCore.CreateEphemeralKey();
-        var sharedSecret = CryptoCore.DeriveSharedSecret(server, clientPublicKey);
+        var requestSalt = Crypto.DeriveRequestSalt(context.Request.Method, context.Request.Path, username);
+        using var server = Crypto.CreateEphemeralKey();
+        var sharedSecret = Crypto.DeriveSharedSecret(server, clientPublicKey);
 
         // HKDF info = UTF8(request.Path)
         var info = Encoding.UTF8.GetBytes(context.Request.Path);
-        var sessionKey = CryptoCore.DeriveSessionKey(sharedSecret, requestSalt, info);
+        var sessionKey = Crypto.DeriveSessionKey(sharedSecret, requestSalt, info);
 
         // protocol version + method + path + username
-        var aad = CryptoCore.BuildAssociatedData(CryptoCore.ProtocolVersion, context.Request.Method, context.Request.Path, username);
+        var aad = Crypto.BuildAssociatedData(Crypto.ProtocolVersion, context.Request.Method, context.Request.Path, username);
 
-        var nonce = RandomNumberGenerator.GetBytes(CryptoCore.NonceLength);
-        var ciphertext = CryptoCore.EncryptResponse(sessionKey, plaintext, nonce, aad, out var tag);
+        var nonce = RandomNumberGenerator.GetBytes(Crypto.NonceLength);
+        var ciphertext = Crypto.EncryptResponse(sessionKey, plaintext, nonce, aad, out var tag);
 
         var responseHeadersAdapter = new HttpResponseHeadersAdapter(context.Response);
-        var responseEnvelope = CryptoCore.CreateServerResponse(
-            CryptoCore.EncodePublicKey(server.PublicKey),
+        var responseEnvelope = Crypto.CreateServerResponse(
+            Crypto.EncodePublicKey(server.PublicKey),
             nonce,
             tag,
-            CryptoCore.ProtocolVersion);
-        ProtocolCodec.SetServerResponseHeaders(responseHeadersAdapter, responseEnvelope);
+            Crypto.ProtocolVersion);
+        Codec.SetServerResponseHeaders(responseHeadersAdapter, responseEnvelope);
 
         context.Response.ContentType = "application/octet-stream";
         context.Response.ContentLength = ciphertext.Length;
