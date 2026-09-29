@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Buffers;
 using System.Buffers.Binary;
 using System.Security.Cryptography;
@@ -6,219 +6,116 @@ using System.Text;
 
 namespace EphemeralDH.Core;
 
+/// <summary>
+/// Primitive operations used by the unauthenticated P-256 session protocol.
+/// </summary>
 public static class Crypto
 {
     public const string ProtocolVersion = "edhx1";
     public const int P256PublicKeyLength = 65;
     public const int NonceLength = 12;
     public const int TagLength = 16;
-    public const int Aes256KeyLength = 32;
-    private const int HkdfSha256MaxLength = 255 * 32;
+    public const int HkdfSha256MaxLength = 255 * 32;
 
-    public static ECDiffieHellman CreateEphemeralKey()
-        => ECDiffieHellman.Create(ECCurve.NamedCurves.nistP256);
+    public static ECDiffieHellman CreateEphemeralKey() => ECDiffieHellman.Create(ECCurve.NamedCurves.nistP256);
 
     public static byte[] DeriveSharedSecret(ECDiffieHellman privateKey, ECDiffieHellmanPublicKey publicKey)
-        => privateKey.DeriveKeyMaterial(publicKey);
+        => privateKey.DeriveRawSecretAgreement(publicKey);
 
     public static byte[] DeriveSharedSecret(ECDiffieHellman privateKey, ReadOnlySpan<byte> encodedPublicKey)
     {
-        if (encodedPublicKey.Length != P256PublicKeyLength || encodedPublicKey[0] != 0x04)
-        {
+        using var peer = ImportPublicKey(encodedPublicKey);
+        return DeriveSharedSecret(privateKey, peer.PublicKey);
+    }
+
+    public static ECDiffieHellman ImportPublicKey(ReadOnlySpan<byte> encoded)
+    {
+        if (encoded.Length != P256PublicKeyLength || encoded[0] != 0x04)
             throw new CryptographicException("Expected uncompressed P-256 public key bytes.");
+        try
+        {
+            var key = ECDiffieHellman.Create();
+            try
+            {
+                key.ImportParameters(new ECParameters
+                {
+                    Curve = ECCurve.NamedCurves.nistP256,
+                    Q = new ECPoint { X = encoded.Slice(1, 32).ToArray(), Y = encoded.Slice(33, 32).ToArray() },
+                });
+                return key;
+            }
+            catch 
+            { 
+                key.Dispose();
+                throw;
+            }
+        }
+        catch (CryptographicException) { throw; }
+        catch (Exception ex) { throw new CryptographicException("Invalid P-256 public key.", ex); }
+    }
+
+    public static byte[] EncodePublicKey(ECDiffieHellmanPublicKey publicKey)
+    {
+        var q = publicKey.ExportParameters().Q;
+        if (q.X is not { Length: 32 } x || q.Y is not { Length: 32 } y)
+            throw new CryptographicException("Expected a P-256 public key.");
+        
+        var result = new byte[P256PublicKeyLength];
+        result[0] = 0x04;
+        x.CopyTo(result, 1);
+        y.CopyTo(result, 33);
+
+        return result;
+    }
+
+    public static byte[] HkdfSha256(ReadOnlySpan<byte> inputKeyMaterial, ReadOnlySpan<byte> salt, ReadOnlySpan<byte> info, int length)
+    {
+        if (inputKeyMaterial.IsEmpty) throw new CryptographicException("HKDF input key material cannot be empty.");
+        if (length < 1 || length > HkdfSha256MaxLength) throw new CryptographicException($"Expected HKDF output length between 1 and {HkdfSha256MaxLength} bytes.");
+        
+        Span<byte> zeroSalt = stackalloc byte[32];
+        zeroSalt.Clear();
+        var actualSalt = salt.IsEmpty ? zeroSalt : salt;
+        var prk = HMACSHA256.HashData(actualSalt, inputKeyMaterial);
+        var output = new byte[length];
+        var previous = Array.Empty<byte>();
+        var offset = 0;
+        for (byte counter = 1; offset < length; counter++)
+        {
+            var blockInput = new byte[previous.Length + info.Length + 1];
+            previous.CopyTo(blockInput, 0);
+            info.CopyTo(blockInput.AsSpan(previous.Length));
+            blockInput[^1] = counter;
+            previous = HMACSHA256.HashData(prk, blockInput);
+            var count = Math.Min(previous.Length, length - offset);
+            previous.AsSpan(0, count).CopyTo(output.AsSpan(offset));
+            offset += count;
+            CryptographicOperations.ZeroMemory(blockInput);
         }
 
-        var x = encodedPublicKey.Slice(1, 32).ToArray();
-        var y = encodedPublicKey.Slice(33, 32).ToArray();
+        CryptographicOperations.ZeroMemory(prk);
+        CryptographicOperations.ZeroMemory(previous);
 
-        using var ecdh = ECDiffieHellman.Create();
-        ecdh.ImportParameters(new ECParameters
-        {
-            Curve = ECCurve.NamedCurves.nistP256,
-            Q = new ECPoint
-            {
-                X = x,
-                Y = y,
-            },
-        });
-
-        return DeriveSharedSecret(privateKey, ecdh.PublicKey);
+        return output;
     }
 
-    public static byte[] DeriveSessionKey(byte[] sharedSecret, byte[] salt, byte[] info, int keySizeBytes = Aes256KeyLength)
-    {
-        ValidateKeyLength(keySizeBytes);
-
-        return HkdfSha256(sharedSecret, salt, info, keySizeBytes);
-    }
-
-    public static byte[] EncryptResponse(byte[] key, byte[] plaintext, byte[] nonce, byte[] associatedData, out byte[] tag)
-    {
-        ValidateNonce(nonce);
-        ValidateKeyLength(key.Length);
-
-        var ciphertext = new byte[plaintext.Length];
-        tag = new byte[TagLength];
-
-        using var aes = new AesGcm(key, TagLength);
-        aes.Encrypt(nonce, plaintext, ciphertext, tag, associatedData);
-        return ciphertext;
-    }
-
-    public static byte[] DecryptResponse(byte[] key, byte[] ciphertext, byte[] nonce, byte[] tag, byte[] associatedData)
-    {
-        ValidateNonce(nonce);
-        ValidateTag(tag);
-        ValidateKeyLength(key.Length);
-
-        var plaintext = new byte[ciphertext.Length];
-        using var aes = new AesGcm(key, TagLength);
-        aes.Decrypt(nonce, ciphertext, tag, plaintext, associatedData);
-
-        return plaintext;
-    }
-
-    public static byte[] BuildAssociatedData(string protocolVersion, string method, string path, string identity)
-    {
-        return ComputeTranscriptHash(protocolVersion, method, path, identity);
-    }
-
-    public static byte[] ComputeTranscriptHash(params string[] parts)
+    internal static byte[] HashTranscript(params ReadOnlyMemory<byte>[] parts)
     {
         var writer = new ArrayBufferWriter<byte>();
-        Span<byte> lengthPrefix = stackalloc byte[4];
-
+        Span<byte> prefix = stackalloc byte[4];
         foreach (var part in parts)
         {
-            var bytes = Encoding.UTF8.GetBytes(part);
-            BinaryPrimitives.WriteInt32BigEndian(lengthPrefix, bytes.Length);
-
-            var span = writer.GetSpan(4 + bytes.Length);
-            lengthPrefix.CopyTo(span);
-            bytes.CopyTo(span[4..]);
-            writer.Advance(4 + bytes.Length);
+            BinaryPrimitives.WriteUInt32BigEndian(prefix, checked((uint)part.Length));
+            var span = writer.GetSpan(4 + part.Length);
+            prefix.CopyTo(span);
+            part.Span.CopyTo(span[4..]);
+            writer.Advance(4 + part.Length);
         }
 
         return SHA256.HashData(writer.WrittenSpan);
     }
 
-    public static byte[] EncodePublicKey(ECDiffieHellmanPublicKey publicKey)
-    {
-        var parameters = publicKey.ExportParameters();
-        if (parameters.Q.X is null || parameters.Q.Y is null)
-        {
-            throw new CryptographicException("Public key is missing coordinates.");
-        }
-
-        var encoded = new byte[P256PublicKeyLength];
-        encoded[0] = 0x04;
-        Buffer.BlockCopy(parameters.Q.X, 0, encoded, 1, parameters.Q.X.Length);
-        Buffer.BlockCopy(parameters.Q.Y, 0, encoded, 1 + parameters.Q.X.Length, parameters.Q.Y.Length);
-
-        return encoded;
-    }
-
-    public static ClientRequestEnvelope CreateClientRequest(string username, byte[] clientEphemeralPublicKey)
-        => new(username, clientEphemeralPublicKey);
-
-    public static ServerResponseEnvelope CreateServerResponse(byte[] serverEphemeralPublicKey, byte[] nonce, byte[] tag, string protocolVersion)
-        => new(serverEphemeralPublicKey, nonce, tag, protocolVersion);
-
-    public static byte[] DeriveRequestSalt(string method, string path, string identity)
-        => ComputeTranscriptHash(ProtocolVersion, method, path, identity);
-
-    private static byte[] HkdfSha256(byte[] ikm, byte[] salt, byte[] info, int length)
-    {
-        if (length < 0 || length > HkdfSha256MaxLength)
-        {
-            throw new CryptographicException($"Expected HKDF output length between 0 and {HkdfSha256MaxLength} bytes.");
-        }
-
-        using var hmac = new HMACSHA256(salt.Length == 0 ? new byte[32] : salt);
-        var prk = hmac.ComputeHash(ikm);
-        var result = new byte[length];
-        var previous = Array.Empty<byte>();
-        var offset = 0;
-        var counter = 1;
-        var counterBuffer = new byte[1];
-
-        while (offset < length)
-        {
-            using var hmacExpand = new HMACSHA256(prk);
-            hmacExpand.TransformBlock(previous, 0, previous.Length, null, 0);
-            hmacExpand.TransformBlock(info, 0, info.Length, null, 0);
-            counterBuffer[0] = (byte)counter;
-            hmacExpand.TransformFinalBlock(counterBuffer, 0, 1);
-            previous = hmacExpand.Hash ?? throw new CryptographicException("HKDF failed.");
-            var toCopy = Math.Min(previous.Length, length - offset);
-            Buffer.BlockCopy(previous, 0, result, offset, toCopy);
-            offset += toCopy;
-            counter++;
-        }
-
-        CryptographicOperations.ZeroMemory(prk);
-        return result;
-    }
-
-    private static void ValidateKeyLength(int keyLength)
-    {
-        if (keyLength != Aes256KeyLength)
-        {
-            throw new CryptographicException($"Expected {Aes256KeyLength}-byte AES-256 key.");
-        }
-    }
-
-    private static void ValidateNonce(byte[] nonce)
-    {
-        if (nonce.Length != NonceLength)
-        {
-            throw new CryptographicException($"Expected {NonceLength}-byte AES-GCM nonce.");
-        }
-    }
-
-    private static void ValidateTag(byte[] tag)
-    {
-        if (tag.Length != TagLength)
-        {
-            throw new CryptographicException($"Expected {TagLength}-byte AES-GCM tag.");
-        }
-    }
+    public static byte[] CreateRestRecordContext(string method, string fullPathAndQuery, string identity, string sessionId)
+        => HashTranscript(Encoding.UTF8.GetBytes(ProtocolVersion), Encoding.UTF8.GetBytes(method),
+            Encoding.UTF8.GetBytes(fullPathAndQuery), Encoding.UTF8.GetBytes(identity), Encoding.UTF8.GetBytes(sessionId));
 }
-
-public sealed record ClientRequestEnvelope(string Username, byte[] ClientEphemeralPublicKey)
-{
-    public void Validate()
-    {
-        if (ClientEphemeralPublicKey.Length != Crypto.P256PublicKeyLength)
-        {
-            throw new CryptographicException("Expected P-256 client public key bytes.");
-        }
-    }
-}
-
-public sealed record ServerResponseEnvelope(byte[] ServerEphemeralPublicKey, byte[] Nonce, byte[] Tag, string ProtocolVersion)
-{
-    public void Validate()
-    {
-        if (ServerEphemeralPublicKey.Length != Crypto.P256PublicKeyLength)
-        {
-            throw new CryptographicException("Expected P-256 server public key bytes.");
-        }
-
-        if (Nonce.Length != Crypto.NonceLength)
-        {
-            throw new CryptographicException("Expected AES-GCM nonce bytes.");
-        }
-
-        if (Tag.Length != Crypto.TagLength)
-        {
-            throw new CryptographicException("Expected AES-GCM tag bytes.");
-        }
-
-        if (ProtocolVersion != Crypto.ProtocolVersion)
-        {
-            throw new CryptographicException("Unexpected protocol version.");
-        }
-    }
-}
-

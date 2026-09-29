@@ -1,83 +1,24 @@
 # EphemeralDH
 
-The implementation of a ECDH → HKDF-SHA256 → AES-GCM pipeline, which is a standard cryptographic combination used to establish secure, authenticated end-to-end encryption between two parties without sharing a long-term secret beforehand.
+BCL-only demo for an ephemeral P-256 Diffie-Hellman handshake, HKDF-SHA256 key schedule, AES-256-GCM records.
 
 Original c# idea / implementation is [here](https://davidtavarez.github.io/2019/implementing-elliptic-curve-diffie-hellman-c-sharp/).
 Also SslStream [limitations](https://stackoverflow.com/questions/20188480/sslstream-without-certificate).
 
-## Core
+## Security properties
 
-Client request
+The handshake is **unauthenticated**. It does not identify either peer and is vulnerable to active interception: an intermediary can establish separate keys with both sides and read or change traffic. Records authenticate data only to the holder of the negotiated session key; they do not authenticate a person, server, or device.
 
-- Identity (username) must be bound into transcripts as `username`.
-- Middleware resolves identity from the authenticated principal (`ClaimsPrincipal.Identity.Name`).
-- `X-EDHX-Client-Public-Key: base64(clientEphemeralPublicKey)` (P-256 uncompressed, 65 bytes; first byte is `0x04`)
-- Transcript bindings for request salt + AEAD AAD are computed from the HTTP `method`, `path`, and identity `username`.
+## Core API
 
-Server response (after successful authorization and after computing the shared secret)
+- `HandshakeRequest` creates a fresh client P-256 key and completes a handshake response.
+- `Handshake.CreateServerSession` validates the client P-256 key and returns a server session plus handshake response.
+- `Session` exposes independent client-to-server and server-to-client traffic keys, sequence counters, REST message protection, and authenticated record methods.
+- `CryptoStream` wraps a readable and writable stream. It supports asynchronous duplex reads and writes and closes its write direction with an authenticated close record when disposed.
 
-- `X-EDHX-Server-Public-Key: base64(serverEphemeralPublicKey)` (P-256 uncompressed, 65 bytes)
-- `X-EDHX-Nonce: base64(nonce)` (12 bytes)
-- `X-EDHX-Tag: base64(tag)` (16 bytes)
-- `X-EDHX-Protocol-Version: edhx1`
-- Response body contains `ciphertext` (AES-GCM encrypted payload bytes).
+Each record has a 4-byte big-endian length, a record type, a 64-bit sequence number, ciphertext, and a 16-byte GCM tag. Data records carry up to 16 KiB. The nonce combines a direction-specific nonce base with the sequence number. Protocol version, direction, session, metadata context, record type, and sequence are authenticated. Readers reject invalid P-256 keys, out-of-order or replayed records, tampering, truncation, and data after an authenticated close in a message.
 
-Client processing (decrypt)
-
-- Derive request salt: `requestSalt = DeriveRequestSalt(method, path, username)`
-- Derive session key: `sessionKey = DeriveSessionKey(sharedSecret, requestSalt, info)`
-- Compute AEAD AAD: `aad = BuildAssociatedData(edhx1, method, path, username)`
-- Decrypt: `plaintext = DecryptResponse(sessionKey, ciphertext, nonce, tag, aad)`
-
-```
-client                      server
-  | Authorization: Basic ...
-  | X-EDHX-Client-Public-Key: ...
-  |------------------------------------->
-  |<-------------------------------------|
-  | X-EDHX-Server-Public-Key: ...
-  | X-EDHX-Nonce: ...
-  | X-EDHX-Tag: ...
-  | X-EDHX-Protocol-Version: edhx1
-  | response body = ciphertext
-
-client decrypts response using the returned server public key + nonce/tag + AAD
-```
-
-## Middleware
-
-`IMiddleware` implementation of a server-side pipeline.
-
-Request
-
-- Identity must be resolvable by the configured `IEdhxIdentityResolver` (default: `BasicPrincipalIdentityResolver`, which reads `ClaimsPrincipal.Identity.Name`); otherwise the middleware responds `401 Unauthorized`.
-- `X-EDHX-Client-Public-Key: base64(clientEphemeralPublicKey)` must be present and parseable; otherwise the middleware responds `401 Unauthorized`.
-- On any `401`, the middleware does not set any `X-EDHX-*` protocol headers.
-
-Response
-
-- Middleware buffers the downstream response and encrypts only when:
-  - the downstream status code is `2xx`, and
-  - the response body is non-empty.
-- For non-2xx responses and empty bodies, the middleware passes the plaintext response through unchanged (and does not set `X-EDHX-*` protocol headers).
-- When encrypting, the middleware returns a ciphertext body and sets:
-  - `X-EDHX-Server-Public-Key: base64(serverEphemeralPublicKey)`
-  - `X-EDHX-Nonce: base64(nonce)` (12 bytes)
-  - `X-EDHX-Tag: base64(tag)` (16 bytes)
-  - `X-EDHX-Protocol-Version: edhx1`
-
-Transcript
-
-- Request salt and AEAD AAD are computed from the HTTP `method`, `path`, and identity `username`.
-- HKDF `info` is computed from `path` as UTF-8 bytes (must match the client implementation).
-
-## Client (demo)
-
-Just a smoke test for the server (see below).
-
-## Server (demo)
-
-`EphemeralDH.Server` is a demo service that composes the existing `EphemeralDH.Core` + `EphemeralDH.Middleware` projects. It is intentionally opinionated so consumers can distinguish what is demo-only from what to reuse in their own servers.
+## Demo
 
 The demo server uses:
 
@@ -88,6 +29,6 @@ The demo server uses:
 Shipped endpoints:
 
 - `GET /health`
-- `POST /users` (admin-only) to create users
-- `POST /echo` (encrypted echo) for authenticated users
+- `POST /users` (admin-only)
+- `POST /echo` (encrypted echo)
 
