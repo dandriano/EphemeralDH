@@ -115,7 +115,7 @@ public static class Crypto
         return SHA256.HashData(writer.WrittenSpan);
     }
 
-    public static byte[] CreateRestRecordContext(string method, string fullPathAndQuery, string identity, string sessionId)
+    public static byte[] CreateRestRecordContext(string method, string fullPathAndQuery, string sessionId)
         => HashTranscript(Encoding.UTF8.GetBytes(ProtocolVersion), Encoding.UTF8.GetBytes(method),
-            Encoding.UTF8.GetBytes(fullPathAndQuery), Encoding.UTF8.GetBytes(identity), Encoding.UTF8.GetBytes(sessionId));
+            Encoding.UTF8.GetBytes(fullPathAndQuery), Encoding.UTF8.GetBytes(sessionId));
 }

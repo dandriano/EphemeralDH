@@ -1,10 +1,11 @@
 using EphemeralDH.Core;
+using Microsoft.AspNetCore.Http;
 
 namespace EphemeralDH.Middleware.Headers;
 
-internal sealed class HttpRequestHeadersAdapter(Microsoft.AspNetCore.Http.HttpRequest request) : IHeaderReader
+internal sealed class HttpRequestHeadersAdapter(HttpRequest request) : IHeaderReader
 {
-    private readonly Microsoft.AspNetCore.Http.HttpRequest _request = request;
+    private readonly HttpRequest _request = request;
 
     public bool TryGetHeader(string name, out string? value)
     {

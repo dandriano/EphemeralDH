@@ -5,7 +5,6 @@ using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
-using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
@@ -14,10 +13,13 @@ using EphemeralDH.Core;
 
 namespace EphemeralDH.Client;
 
+/// <summary>
+/// Just a smoke test
+/// </summary>
 internal static class Program
 {
-    private const string Host = "192.168.1.163";
-    private const int Port = 8080;
+    private const string Host = "localhost";
+    private const int Port = 5555;
     private const string AdminUsername = "admin";
     private const string AdminPassword = "admin";
 
@@ -79,30 +81,8 @@ internal static class Program
             bodyString: CreateEchoPayloadJson(),
             contentType: "application/json");
 
-        Console.WriteLine("\n==> /echo positive case (encrypted response)");
-        using var clientEphemeral = Crypto.CreateEphemeralKey();
-        var clientPublicKey = Crypto.EncodePublicKey(clientEphemeral.PublicKey);
-        var clientPubB64 = Convert.ToBase64String(clientPublicKey);
-        Console.WriteLine($"Client public key (base64, hidden length={clientPubB64.Length})");
-
-        var echoResponse = await SendDebugAsync(
-            http,
-            HttpMethod.Post,
-            "/echo",
-            headers: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-            {
-                ["Authorization"] = $"Basic {adminAuthB64}",
-                [Codec.ClientPublicKeyHeader] = clientPubB64,
-            },
-            bodyString: CreateEchoPayloadJson(),
-            contentType: "application/json");
-
-        TryDecryptEchoResponse(
-            echoResponse,
-            clientEphemeral,
-            method: "POST",
-            path: "/echo",
-            identity: AdminUsername);
+        Console.WriteLine("\n==> /echo positive case (edhx1 request and response bodies)");
+        await SendProtectedEchoAsync(http, adminAuthB64);
 
         Console.WriteLine("\nDone.");
     }
@@ -229,39 +209,43 @@ internal static class Program
         return new DebugResponse(response.StatusCode, combinedHeaders, responseContentType, bodyBytes);
     }
 
-    private static void TryDecryptEchoResponse(DebugResponse response, ECDiffieHellman clientEphemeral, string method, string path, string identity)
+    private static async Task SendProtectedEchoAsync(HttpClient http, string adminAuthB64)
     {
-        if (response.StatusCode != HttpStatusCode.OK)
+        using var handshake = new HandshakeRequest();
+        using var handshakeRequest = new HttpRequestMessage(HttpMethod.Post, Codec.SessionPath);
+        handshakeRequest.Headers.Authorization = new AuthenticationHeaderValue("Basic", adminAuthB64);
+        handshakeRequest.Headers.TryAddWithoutValidation(Codec.ClientPublicKeyHeader, Convert.ToBase64String(handshake.PublicKey));
+        handshakeRequest.Headers.TryAddWithoutValidation(Codec.ProtocolVersionHeader, Crypto.ProtocolVersion);
+        using var handshakeResponse = await http.SendAsync(handshakeRequest);
+        if (!handshakeResponse.IsSuccessStatusCode)
         {
-            Console.WriteLine($"\nDecryption skipped (HTTP {(int)response.StatusCode}).");
+            Console.WriteLine($"Handshake failed: HTTP {(int)handshakeResponse.StatusCode}");
             return;
         }
 
-        try
-        {
-            var protocolVersion = ReadRequiredHeader(response.Headers, Codec.ProtocolVersionHeader);
-            var serverPublicKeyB64 = ReadRequiredHeader(response.Headers, Codec.ServerPublicKeyHeader);
-            var nonceB64 = ReadRequiredHeader(response.Headers, Codec.NonceHeader);
-            var tagB64 = ReadRequiredHeader(response.Headers, Codec.TagHeader);
+        var responseHeaders = GetAllHeaders(handshakeResponse);
+        var handshakeEnvelope = new HandshakeResponse(
+            ReadRequiredHeader(responseHeaders, Codec.SessionIdHeader),
+            Convert.FromBase64String(ReadRequiredHeader(responseHeaders, Codec.ServerPublicKeyHeader)),
+            ReadRequiredHeader(responseHeaders, Codec.ProtocolVersionHeader));
+        using var session = handshake.Complete(handshakeEnvelope);
 
-            var serverPublicKey = Convert.FromBase64String(serverPublicKeyB64);
-            var nonce = Convert.FromBase64String(nonceB64);
-            var tag = Convert.FromBase64String(tagB64);
-
-            var requestSalt = Crypto.DeriveRequestSalt(method, path, identity);
-            var sharedSecret = Crypto.DeriveSharedSecret(clientEphemeral, serverPublicKey);
-            var info = Encoding.UTF8.GetBytes(path);
-            var sessionKey = Crypto.DeriveSessionKey(sharedSecret, requestSalt, info);
-            var aad = Crypto.BuildAssociatedData(protocolVersion, method, path, identity);
-
-            var plaintext = Crypto.DecryptResponse(sessionKey, response.BodyBytes, nonce, tag, aad);
-            Console.WriteLine("\n-- Decrypted /echo response --");
-            Console.WriteLine(PreviewUtf8(plaintext, 400));
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"\nDecryption failed: {ex.GetType().Name}: {ex.Message}");
-        }
+        const string path = "/echo";
+        var context = Crypto.CreateRestRecordContext("POST", path, AdminUsername, session.SessionId);
+        var requestBody = Encoding.UTF8.GetBytes(CreateEchoPayloadJson());
+        var protectedRequest = session.EncryptMessage(requestBody, context);
+        using var request = new HttpRequestMessage(HttpMethod.Post, path);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Basic", adminAuthB64);
+        request.Headers.TryAddWithoutValidation(Codec.SessionIdHeader, session.SessionId);
+        request.Headers.TryAddWithoutValidation(Codec.ProtocolVersionHeader, Crypto.ProtocolVersion);
+        request.Content = new ByteArrayContent(protectedRequest);
+        request.Content.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
+        using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
+        var protectedResponse = await response.Content.ReadAsByteArrayAsync();
+        Console.WriteLine($"/echo returned HTTP {(int)response.StatusCode}; status and headers remain visible.");
+        var plaintext = session.DecryptMessage(protectedResponse, context);
+        Console.WriteLine("-- Decrypted /echo response --");
+        Console.WriteLine(PreviewUtf8(plaintext, 400));
     }
 
     private static Dictionary<string, string[]> GetAllHeaders(HttpResponseMessage response)

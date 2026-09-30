@@ -4,8 +4,7 @@ namespace EphemeralDH.Middleware;
 
 internal sealed class EncryptionRequiredMetadata;
 
-
-public static class EncryptionEndpointConventionBuilderExtensions
+public static class EndpointConventionExtensions
 {
     public static TBuilder RequireEdhxEncryption<TBuilder>(this TBuilder builder)
         where TBuilder : IEndpointConventionBuilder

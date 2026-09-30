@@ -7,11 +7,8 @@ namespace EphemeralDH.Server.Endpoints;
 
 public static class SecureEndpoints
 {
-    public static Task<IResult> EchoEncrypted(
-        JsonElement body,
-        CancellationToken ct)
+    public static Task<IResult> EchoEncrypted(JsonElement body, CancellationToken ct)
     {
-        // Middleware encrypts the response body; we just round-trip the JSON payload.
         return Task.FromResult(Results.Json(body));
     }
 }

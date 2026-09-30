@@ -20,7 +20,8 @@ builder.Services.AddSingleton<ISqliteConnectionFactory, SqliteConnectionFactory>
 builder.Services.AddSingleton<DbInitializer>();
 builder.Services.AddScoped<IUnitOfWork, SqliteUnitOfWork>();
 builder.Services.AddScoped<IUserStore, SqliteUserStore>();
-builder.Services.AddTransient<EdhxEncryptionMiddleware>();
+builder.Services.AddTransient<CryptoMiddleware>();
+builder.Services.AddSingleton<ISessionStore, InMemorySessionStore>();
 
 // Basic auth.
 builder.Services
@@ -56,7 +57,7 @@ using (var scope = app.Services.CreateScope())
 app.UseAuthentication();
 app.UseMiddleware<UnitOfWorkMiddleware>();
 app.UseAuthorization();
-app.UseMiddleware<EdhxEncryptionMiddleware>();
+app.UseMiddleware<CryptoMiddleware>();
 
 app.MapHealthChecks("/health");
 

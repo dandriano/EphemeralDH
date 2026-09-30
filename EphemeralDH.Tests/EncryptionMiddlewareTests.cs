@@ -1,166 +1,138 @@
 using System;
-using System.Linq;
-using System.Net;
 using System.IO;
+using System.Security.Claims;
 using System.Text;
 using System.Threading.Tasks;
-using Microsoft.AspNetCore.Http;
-using System.Security.Claims;
 using EphemeralDH.Core;
 using EphemeralDH.Middleware;
-
+using Microsoft.AspNetCore.Http;
 
 namespace EphemeralDH.Tests;
 
 public class EncryptionMiddlewareTests
 {
-    private static void MarkAsEdhxEncryptedEndpoint(DefaultHttpContext context)
+    private const string Username = "alice";
+
+    private static void MarkAsEncrypted(DefaultHttpContext context)
     {
-        var metadataType = typeof(EdhxEncryptionMiddleware).Assembly.GetType(
-            "EphemeralDH.Middleware.EncryptionRequiredMetadata",
-            throwOnError: true);
-        var metadataInstance = Activator.CreateInstance(metadataType!)!;
-
-        var endpoint = new Endpoint(
-            _ => Task.CompletedTask,
-            new EndpointMetadataCollection([metadataInstance]),
-            displayName: "edhx-secure");
-
-        context.SetEndpoint(endpoint);
+        var metadataType = typeof(CryptoMiddleware).Assembly.GetType("EphemeralDH.Middleware.EncryptionRequiredMetadata", true)!;
+        var metadata = Activator.CreateInstance(metadataType)!;
+        context.SetEndpoint(new Endpoint(_ => Task.CompletedTask, new EndpointMetadataCollection([metadata]), "secure"));
     }
 
-    private static async Task InvokeAsync(EdhxEncryptionMiddleware middleware,
-        DefaultHttpContext context,
-        RequestDelegate next)
+    private static DefaultHttpContext CreateAuthenticatedContext(string path)
     {
-        await middleware.InvokeAsync(context, next);
-    }
-
-    [Fact]
-    public async Task SecureEndpoint_EncryptsResponse_AndDecryptsWithReturnedHeaders()
-    {
-        const string username = "alice";
-        const string path = "/api/secure";
-        const string plaintextText = "response-body";
-        var plaintext = Encoding.UTF8.GetBytes(plaintextText);
-
-        using var clientKey = Crypto.CreateEphemeralKey();
-        var clientPublicKey = Crypto.EncodePublicKey(clientKey.PublicKey);
-
-        var middleware = new EdhxEncryptionMiddleware();
         var context = new DefaultHttpContext();
-        MarkAsEdhxEncryptedEndpoint(context);
-        context.Response.Body = new MemoryStream();
-        context.Request.Method = "POST";
         context.Request.Path = path;
-
-        context.User = new ClaimsPrincipal(
-            new ClaimsIdentity(new[] { new Claim(ClaimTypes.Name, username) }, authenticationType: "test"));
-        context.Request.Headers[Codec.ClientPublicKeyHeader] = Convert.ToBase64String(clientPublicKey);
-
-        // `next` writes the plaintext body and sets 2xx status.
-        static Task next(HttpContext ctx)
-        {
-            ctx.Response.StatusCode = (int)HttpStatusCode.OK;
-            return ctx.Response.WriteAsync(plaintextText);
-        }
-
-        await InvokeAsync(middleware, context, next);
-
-        Assert.Equal((int)HttpStatusCode.OK, context.Response.StatusCode);
-        Assert.True(context.Response.Headers.ContainsKey(Codec.ServerPublicKeyHeader));
-        Assert.True(context.Response.Headers.ContainsKey(Codec.NonceHeader));
-        Assert.True(context.Response.Headers.ContainsKey(Codec.TagHeader));
-        Assert.True(context.Response.Headers.ContainsKey(Codec.ProtocolVersionHeader));
-
-        var cipherBytes = ReadResponseBody(context);
-        Assert.False(plaintext.SequenceEqual(cipherBytes));
-
-        var serverPublicKeyB64 = context.Response.Headers[Codec.ServerPublicKeyHeader].ToString();
-        var serverNonceB64 = context.Response.Headers[Codec.NonceHeader].ToString();
-        var tagB64 = context.Response.Headers[Codec.TagHeader].ToString();
-        var protocolVersion = context.Response.Headers[Codec.ProtocolVersionHeader].ToString();
-
-        var serverEphemeralPublicKey = Convert.FromBase64String(serverPublicKeyB64);
-        var nonce = Convert.FromBase64String(serverNonceB64);
-        var tag = Convert.FromBase64String(tagB64);
-
-        Assert.Equal(Crypto.ProtocolVersion, protocolVersion);
-
-        // Compute client side session key using server ephemeral public key.
-        var sharedSecret = Crypto.DeriveSharedSecret(clientKey, serverEphemeralPublicKey);
-        var requestSalt = Crypto.DeriveRequestSalt("POST", path, username);
-        var info = Encoding.UTF8.GetBytes(path); // must match middleware
-        var clientSessionKey = Crypto.DeriveSessionKey(sharedSecret, requestSalt, info);
-        var aad = Crypto.BuildAssociatedData(Crypto.ProtocolVersion, "POST", path, username);
-
-        var decrypted = Crypto.DecryptResponse(clientSessionKey, cipherBytes, nonce, tag, aad);
-        Assert.True(decrypted.SequenceEqual(plaintext));
+        context.User = new ClaimsPrincipal(new ClaimsIdentity([new Claim(ClaimTypes.Name, Username)], "test"));
+        context.Response.Body = new MemoryStream();
+        return context;
     }
 
     [Fact]
-    public async Task SecureEndpoint_MissingIdentity_Returns401_AndNoEdhxHeaders()
+    public async Task HandshakeThenProtectedRequestAndErrorResponseAreBothEncrypted_AndSessionIsOneUse()
     {
-        var middleware = new EdhxEncryptionMiddleware();
-        var context = new DefaultHttpContext();
-        MarkAsEdhxEncryptedEndpoint(context);
-        context.Response.Body = new MemoryStream();
-        context.Request.Method = "POST";
-        context.Request.Path = "/api/something";
+        using var clientHandshake = new HandshakeRequest();
+        using var store = new InMemorySessionStore();
+        var middleware = new CryptoMiddleware(store);
 
-        // Provide only client public key, but omit identity.
-        using var key = Crypto.CreateEphemeralKey();
-        var clientPublicKey = Crypto.EncodePublicKey(key.PublicKey);
-        context.Request.Headers[Codec.ClientPublicKeyHeader] = Convert.ToBase64String(clientPublicKey);
+        var handshakeContext = CreateAuthenticatedContext(Codec.SessionPath);
+        handshakeContext.Request.Method = HttpMethods.Post;
+        handshakeContext.Request.Headers[Codec.ClientPublicKeyHeader] = Convert.ToBase64String(clientHandshake.PublicKey);
+        handshakeContext.Request.Headers[Codec.ProtocolVersionHeader] = Crypto.ProtocolVersion;
+        await middleware.InvokeAsync(handshakeContext, _ => throw new InvalidOperationException("Handshake must terminate in middleware."));
 
-        static Task next(HttpContext ctx)
+        Assert.Equal(StatusCodes.Status204NoContent, handshakeContext.Response.StatusCode);
+        var sessionId = handshakeContext.Response.Headers[Codec.SessionIdHeader].ToString();
+        var handshakeResponse = new HandshakeResponse(sessionId,
+            Convert.FromBase64String(handshakeContext.Response.Headers[Codec.ServerPublicKeyHeader].ToString()),
+            handshakeContext.Response.Headers[Codec.ProtocolVersionHeader].ToString());
+        using var clientSession = clientHandshake.Complete(handshakeResponse);
+
+        const string path = "/api/secure?mode=error";
+        var contextBinding = Crypto.CreateRestRecordContext("POST", path, sessionId);
+        var requestPlaintext = Encoding.UTF8.GetBytes("request secret");
+        var protectedRequest = clientSession.EncryptMessage(requestPlaintext, contextBinding);
+        var request = CreateAuthenticatedContext("/api/secure");
+        request.Request.Method = HttpMethods.Post;
+        request.Request.QueryString = new QueryString("?mode=error");
+        request.Request.Headers[Codec.SessionIdHeader] = sessionId;
+        request.Request.Headers[Codec.ProtocolVersionHeader] = Crypto.ProtocolVersion;
+        request.Request.Body = new MemoryStream(protectedRequest);
+        MarkAsEncrypted(request);
+
+        await middleware.InvokeAsync(request, async ctx =>
         {
-            ctx.Response.StatusCode = (int)HttpStatusCode.OK;
-            return ctx.Response.WriteAsync("should-not-run");
-        }
+            using var body = new MemoryStream();
+            await ctx.Request.Body.CopyToAsync(body);
+            Assert.Equal(requestPlaintext, body.ToArray());
+            ctx.Response.StatusCode = StatusCodes.Status422UnprocessableEntity;
+            await ctx.Response.WriteAsync("encrypted error details");
+        });
 
-        await InvokeAsync(middleware, context, next);
+        Assert.Equal(StatusCodes.Status422UnprocessableEntity, request.Response.StatusCode);
+        Assert.Equal(Crypto.ProtocolVersion, request.Response.Headers[Codec.ProtocolVersionHeader]);
+        request.Response.Body.Position = 0;
+        using var protectedResponse = new MemoryStream();
+        await request.Response.Body.CopyToAsync(protectedResponse);
+        Assert.Equal("encrypted error details", Encoding.UTF8.GetString(clientSession.DecryptMessage(protectedResponse.ToArray(), contextBinding)));
 
-        Assert.Equal((int)HttpStatusCode.Unauthorized, context.Response.StatusCode);
-        Assert.False(context.Response.Headers.ContainsKey(Codec.ServerPublicKeyHeader));
-        Assert.False(context.Response.Headers.ContainsKey(Codec.NonceHeader));
-        Assert.False(context.Response.Headers.ContainsKey(Codec.TagHeader));
-        Assert.False(context.Response.Headers.ContainsKey(Codec.ProtocolVersionHeader));
+        var replay = CreateAuthenticatedContext("/api/secure");
+        replay.Request.Method = HttpMethods.Post;
+        replay.Request.QueryString = new QueryString("?mode=error");
+        replay.Request.Headers[Codec.SessionIdHeader] = sessionId;
+        replay.Request.Headers[Codec.ProtocolVersionHeader] = Crypto.ProtocolVersion;
+        replay.Request.Body = new MemoryStream(protectedRequest);
+        MarkAsEncrypted(replay);
+        await middleware.InvokeAsync(replay, _ => throw new InvalidOperationException("Replayed session must be rejected."));
+        Assert.Equal(StatusCodes.Status400BadRequest, replay.Response.StatusCode);
     }
 
     [Fact]
-    public async Task SecureEndpoint_MissingClientPublicKey_Returns401_AndNoEdhxHeaders()
+    public void SessionStore_ExpiresAndConsumesEachSessionOnce()
     {
-        const string username = "alice";
+        using var clientHandshake = new HandshakeRequest();
+        var (expiredResponse, expiredSession) = Handshake.CreateSession(clientHandshake.PublicKey);
+        using var store = new InMemorySessionStore();
+        store.Add(expiredResponse.SessionId, expiredSession, DateTimeOffset.UtcNow.AddSeconds(1));
+        Assert.False(store.TryTake(expiredResponse.SessionId, DateTimeOffset.UtcNow.AddSeconds(2), out _));
 
-        var middleware = new EdhxEncryptionMiddleware();
-        var context = new DefaultHttpContext();
-        MarkAsEdhxEncryptedEndpoint(context);
-        context.Response.Body = new MemoryStream();
-        context.Request.Method = "POST";
-        context.Request.Path = "/api/something";
-
-        context.User = new ClaimsPrincipal(
-            new ClaimsIdentity([new Claim(ClaimTypes.Name, username)], authenticationType: "test"));
-
-        static Task next(HttpContext ctx)
-        {
-            ctx.Response.StatusCode = (int)HttpStatusCode.OK;
-            return ctx.Response.WriteAsync("should-not-run");
-        }
-
-        await InvokeAsync(middleware, context, next);
-
-        Assert.Equal((int)HttpStatusCode.Unauthorized, context.Response.StatusCode);
-        Assert.False(context.Response.Headers.ContainsKey(Codec.ServerPublicKeyHeader));
-        Assert.False(context.Response.Headers.ContainsKey(Codec.NonceHeader));
-        Assert.False(context.Response.Headers.ContainsKey(Codec.TagHeader));
-        Assert.False(context.Response.Headers.ContainsKey(Codec.ProtocolVersionHeader));
+        var (response, session) = Handshake.CreateSession(clientHandshake.PublicKey);
+        store.Add(response.SessionId, session, DateTimeOffset.UtcNow.AddMinutes(1));
+        Assert.True(store.TryTake(response.SessionId, DateTimeOffset.UtcNow, out var taken));
+        Assert.NotNull(taken);
+        taken!.Dispose();
+        Assert.False(store.TryTake(response.SessionId, DateTimeOffset.UtcNow, out _));
     }
 
-    private static byte[] ReadResponseBody(DefaultHttpContext context)
+    [Fact]
+    public async Task MalformedRestRecordReturnsBadRequestAndConsumesSession()
     {
-        var stream = Assert.IsType<MemoryStream>(context.Response.Body);
-        return stream.ToArray();
+        using var clientHandshake = new HandshakeRequest();
+        using var store = new InMemorySessionStore();
+        var middleware = new CryptoMiddleware(store);
+        var handshakeContext = CreateAuthenticatedContext(Codec.SessionPath);
+        handshakeContext.Request.Method = HttpMethods.Post;
+        handshakeContext.Request.Headers[Codec.ClientPublicKeyHeader] = Convert.ToBase64String(clientHandshake.PublicKey);
+        handshakeContext.Request.Headers[Codec.ProtocolVersionHeader] = Crypto.ProtocolVersion;
+        await middleware.InvokeAsync(handshakeContext, _ => throw new InvalidOperationException());
+
+        var id = handshakeContext.Response.Headers[Codec.SessionIdHeader].ToString();
+        var response = new HandshakeResponse(id,
+            Convert.FromBase64String(handshakeContext.Response.Headers[Codec.ServerPublicKeyHeader].ToString()),
+            Crypto.ProtocolVersion);
+        using var client = clientHandshake.Complete(response);
+        var binding = Crypto.CreateRestRecordContext("POST", "/api/secure", id);
+        var body = client.EncryptMessage("secret"u8.ToArray(), binding);
+        body[13] ^= 1;
+
+        var request = CreateAuthenticatedContext("/api/secure");
+        request.Request.Method = HttpMethods.Post;
+        request.Request.Headers[Codec.SessionIdHeader] = id;
+        request.Request.Headers[Codec.ProtocolVersionHeader] = Crypto.ProtocolVersion;
+        request.Request.Body = new MemoryStream(body);
+        MarkAsEncrypted(request);
+        await middleware.InvokeAsync(request, _ => throw new InvalidOperationException("Malformed records must not reach the endpoint."));
+        Assert.Equal(StatusCodes.Status400BadRequest, request.Response.StatusCode);
     }
 }
